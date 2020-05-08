@@ -1,0 +1,98 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - master
+      - develop
+    # Skip jobs when only documentation files are changed
+    paths-ignore:
+      - '**.md'
+      - '**.rst'
+      - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - '**.rst'
+      - 'docs/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: alicevision/alicevision-deps:ci-2020.05.08-centos7-cuda9.0
+    env:
+      DEPS_INSTALL_DIR: /opt/AliceVision_install
+      BUILD_TYPE: Release
+      CTEST_OUTPUT_ON_FAILURE: 1
+    steps:
+      - uses: actions/checkout@v1
+
+      - name: Prepare File Tree
+        run: |
+          mkdir ./build
+          mkdir ./build_as_3rdparty
+          mkdir ./functional_tests
+          mkdir ../AV_install
+          git submodule update -i
+
+      - name: Configure CMake
+        working-directory: ./build
+        run: |
+          cmake .. \
+           -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
+           -DBUILD_SHARED_LIBS:BOOL=ON \
+           -DCMAKE_PREFIX_PATH="${DEPS_INSTALL_DIR}" \
+           -DCMAKE_INSTALL_PREFIX:PATH=../../AV_install \
+           -DTARGET_ARCHITECTURE=core \
+           -DALICEVISION_BUILD_TESTS:BOOL=ON \
+           -DALICEVISION_BUILD_EXAMPLES:BOOL=ON \
+           -DALICEVISION_USE_OPENCV:BOOL=ON \
+           -DALICEVISION_USE_CUDA:BOOL=ON \
+           -DALICEVISION_USE_CCTAG:BOOL=ON \
+           -DALICEVISION_USE_POPSIFT:BOOL=ON \
+           -DALICEVISION_USE_ALEMBIC:BOOL=ON  \
+           -DOpenCV_DIR:PATH="${DEPS_INSTALL_DIR}/share/OpenCV" \
+           -DALICEVISION_USE_OPENGV:BOOL=ON \
+           -DOPENGV_DIR:PATH="${DEPS_INSTALL_DIR}" \
+           -DBOOST_NO_CXX11:BOOL=ON \
+           -DCeres_DIR:PATH="${DEPS_INSTALL_DIR}/share/Ceres" \
+           -DEIGEN_INCLUDE_DIR_HINTS:PATH="${DEPS_INSTALL_DIR}" \
+           -DAlembic_DIR:PATH="${DEPS_INSTALL_DIR}/lib/cmake/Alembic"
+
+      - name: Build
+        working-directory: ./build
+        run: |
+          make -j8 install
+
+      - name: Unit Tests
+        working-directory: ./build
+        run: |
+          make test || true
+
+      - name: Build As Third Party
+        working-directory: ./build_as_3rdparty
+        run: |
+          cmake ../src/samples/aliceVisionAs3rdParty \
+           -DBUILD_SHARED_LIBS:BOOL=ON \
+           -DCMAKE_PREFIX_PATH:PATH="../../AV_install;${DEPS_INSTALL_DIR}"
+          make -j8
+
+      - name: Functional Tests
+        working-directory: ./functional_tests
+        run: |
+          git clone --branch master https://github.com/alicevision/SfM_quality_evaluation.git
+          cd SfM_quality_evaluation/
+          # checkout a specific commit to ensure repeatability
+          git checkout 1828a5076ccca86fd523c92a768f1d518dfdbb91
+          pwd
+          ls -l
+          ls -l ..
+          ls -l ../..
+          ls -l ../../..
+          ls -l ../../../AV_install
+          ls -l ../../../AV_install/*
+          type python
+          python --version
+          python EvaluationLauncher.py -s ../../../AV_install/bin -i Benchmarking_Camera_Calibration_2008/ -o reconstructions/ -r results.json -v
+          cat results.json
